@@ -15,6 +15,7 @@ type Act struct {
 	Artist    string
 	Song      string
 	SemiGroup int // 1 = SF1, 2 = SF2, 0 = auto-qualifier (Big 5 + host)
+	RunOrder  int // Grand Final running order draw number (0 = unknown)
 }
 
 // FinalEntry holds a country's placement in the Grand Final results.

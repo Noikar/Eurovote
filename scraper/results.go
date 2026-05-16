@@ -47,6 +47,95 @@ func FetchSemiQualifiers(year, semiNum int) ([]string, error) {
 	return qs, nil
 }
 
+// FetchFinalRunOrder returns a map of country → Grand Final running order draw number.
+// Returns an error if the draw hasn't been published on Wikipedia yet.
+func FetchFinalRunOrder(year int) (map[string]int, error) {
+	base := "https://en.wikipedia.org/wiki/Eurovision_Song_Contest_" +
+		strconv.Itoa(year) + "_%E2%80%93_Grand_final"
+
+	// Try dedicated Grand Final article pages first.
+	for _, url := range []string{base, strings.Replace(base, "Grand_final", "Grand_Final", 1)} {
+		doc, err := fetchDocURL(url)
+		if err != nil {
+			continue
+		}
+		if order := parseRunOrderFromRows(doc.Find("table.wikitable tr")); len(order) > 0 {
+			return order, nil
+		}
+	}
+
+	// Fall back to the main contest article, scoped to the Grand Final section
+	// so we don't accidentally read semi-final draw numbers.
+	doc, err := fetchDoc(year)
+	if err != nil {
+		return nil, fmt.Errorf("could not fetch Eurovision page: %w", err)
+	}
+	if order := parseRunOrderFromFinalSection(doc); len(order) > 0 {
+		return order, nil
+	}
+
+	return nil, fmt.Errorf("Grand Final running order not yet available on Wikipedia")
+}
+
+// parseRunOrderFromFinalSection finds the "Final" heading in the main article
+// and reads running order numbers only from the tables within that section.
+func parseRunOrderFromFinalSection(doc *goquery.Document) map[string]int {
+	var rows *goquery.Selection
+	doc.Find("h2, h3, .mw-heading").EachWithBreak(func(_ int, h *goquery.Selection) bool {
+		text := strings.ToLower(cleanText(h.Text()))
+		// Match "Final" or "Grand Final" but not "Semi-final".
+		if !strings.Contains(text, "final") || strings.Contains(text, "semi") {
+			return true
+		}
+		anchor := h
+		if h.Parent().HasClass("mw-heading") {
+			anchor = h.Parent()
+		}
+		anchor.NextUntil("h2, h3, .mw-heading").Each(func(_ int, s *goquery.Selection) {
+			// The table is often the direct sibling element, not a descendant,
+			// so we must check whether s itself is the table.
+			var found *goquery.Selection
+			if goquery.NodeName(s) == "table" {
+				found = s.Find("tr")
+			} else {
+				found = s.Find("table.wikitable tr")
+			}
+			if rows == nil {
+				rows = found
+			} else {
+				rows = rows.AddSelection(found)
+			}
+		})
+		return false
+	})
+	if rows == nil {
+		return nil
+	}
+	return parseRunOrderFromRows(rows)
+}
+
+// parseRunOrderFromRows extracts country → draw number from a set of table rows.
+// A row contributes when its th[scope=row] is a positive integer and the first td
+// holds a non-empty country name.
+func parseRunOrderFromRows(rows *goquery.Selection) map[string]int {
+	order := make(map[string]int)
+	rows.Each(func(_ int, row *goquery.Selection) {
+		if row.Find("th[scope=col]").Length() > 0 {
+			return
+		}
+		th := cleanText(row.Find("th[scope=row]").First().Text())
+		n, err := strconv.Atoi(th)
+		if err != nil || n < 1 {
+			return
+		}
+		country := cleanText(row.Find("td").First().Text())
+		if country != "" && order[country] == 0 {
+			order[country] = n
+		}
+	})
+	return order
+}
+
 // FetchFinalRankings fetches the Grand Final placement results.
 // Returns an error if results aren't available yet.
 func FetchFinalRankings(year int) ([]models.FinalEntry, error) {
