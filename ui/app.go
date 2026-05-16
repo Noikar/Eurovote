@@ -21,6 +21,9 @@ func Run(app fyne.App) {
 
 	root := container.NewStack(loadingScreen())
 	w.SetContent(root)
+	app.Lifecycle().SetOnEnteredForeground(func() {
+		w.Canvas().Refresh(w.Content())
+	})
 	w.Show()
 
 	go func() {

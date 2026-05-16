@@ -14,29 +14,26 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// applyRunOrder fetches the Grand Final draw order from Wikipedia and sorts
-// acts by their running number. Falls back to alphabetical if unavailable.
+// applyRunOrder fetches the Grand Final draw order from Wikipedia and returns
+// only the acts that appear in it, sorted by running number.
+// If the run order is unavailable, returns all acts sorted alphabetically.
 func applyRunOrder(acts []models.Act) []models.Act {
 	order, err := scraper.FetchFinalRunOrder(currentYear())
-	if err == nil {
+	if err == nil && len(order) > 0 {
+		var result []models.Act
 		for i := range acts {
 			if n, ok := order[acts[i].Country]; ok {
 				acts[i].RunOrder = n
+				result = append(result, acts[i])
 			}
 		}
+		sort.Slice(result, func(i, j int) bool {
+			return result[i].RunOrder < result[j].RunOrder
+		})
+		return result
 	}
 	sort.Slice(acts, func(i, j int) bool {
-		ri, rj := acts[i].RunOrder, acts[j].RunOrder
-		if ri == 0 && rj == 0 {
-			return acts[i].Country < acts[j].Country
-		}
-		if ri == 0 {
-			return false
-		}
-		if rj == 0 {
-			return true
-		}
-		return ri < rj
+		return acts[i].Country < acts[j].Country
 	})
 	return acts
 }
@@ -51,7 +48,7 @@ func NewFinalScreen(allActs []models.Act, w fyne.Window) fyne.CanvasObject {
 	)
 
 	go func() {
-		acts := applyRunOrder(resolveQualifiedActs(allActs))
+		acts := applyRunOrder(allActs)
 		screen := buildFinalScreen(acts, w)
 		fyne.Do(func() {
 			wrapper.Objects = []fyne.CanvasObject{screen}
@@ -62,60 +59,6 @@ func NewFinalScreen(allActs []models.Act, w fyne.Window) fyne.CanvasObject {
 	return wrapper
 }
 
-// resolveQualifiedActs returns only the acts that qualify for the Grand Final:
-// auto-qualifiers (SemiGroup == 0), plus the top 10 from each semi-final.
-// If no saved rankings exist for a semi, it falls back to Wikipedia.
-func resolveQualifiedActs(allActs []models.Act) []models.Act {
-	var result []models.Act
-
-	for _, a := range allActs {
-		if a.SemiGroup == 0 {
-			result = append(result, a)
-		}
-	}
-
-	for _, group := range []int{1, 2} {
-		saved := loadSemiSelections(group)
-		if len(saved) > 0 {
-			cutoff := 10
-			if len(saved) < cutoff {
-				cutoff = len(saved)
-			}
-			qualSet := make(map[string]bool, cutoff)
-			for _, c := range saved[:cutoff] {
-				qualSet[c] = true
-			}
-			for _, a := range allActs {
-				if a.SemiGroup == group && qualSet[a.Country] {
-					result = append(result, a)
-				}
-			}
-		} else {
-			// No user rankings saved — pull real qualifiers from Wikipedia.
-			qs, err := scraper.FetchSemiQualifiers(currentYear(), group)
-			if err == nil && len(qs) > 0 {
-				qualSet := make(map[string]bool, len(qs))
-				for _, c := range qs {
-					qualSet[c] = true
-				}
-				for _, a := range allActs {
-					if a.SemiGroup == group && qualSet[a.Country] {
-						result = append(result, a)
-					}
-				}
-			} else {
-				// Wikipedia unavailable — show all acts from this semi as a fallback.
-				for _, a := range allActs {
-					if a.SemiGroup == group {
-						result = append(result, a)
-					}
-				}
-			}
-		}
-	}
-
-	return result
-}
 
 func buildFinalScreen(acts []models.Act, w fyne.Window) fyne.CanvasObject {
 	// Restore any previously saved votes.
